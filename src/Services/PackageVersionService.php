@@ -50,19 +50,35 @@ class PackageVersionService
             }
 
             $currentVersion = $currentVersions[$package] ?? null;
-            $latestVersion = $this->getLatestVersionFromPackagist($package);
+            // Get all stable versions (newest first) and compute a correct target
+            $allStableVersions = $this->getAllStableVersionsFromPackagist($package);
+            $latestVersion = $allStableVersions[0] ?? null;
+            // Choose the highest version that is greater than current (avoid downgrades)
+            $targetVersion = $latestVersion;
+            if ($currentVersion) {
+                $targetVersion = null;
+                foreach ($allStableVersions as $v) {
+                    if ($this->versionCompare($currentVersion, $v) < 0) {
+                        $targetVersion = $v;
+                        break;
+                    }
+                }
+            }
             
-            $hasUpdate = $latestVersion && 
-                        $currentVersion && 
-                        $this->versionCompare($currentVersion, $latestVersion) < 0;
+            $hasUpdate = $targetVersion &&
+                        $currentVersion &&
+                        $this->versionCompare($currentVersion, $targetVersion) < 0;
 
             $updates[$package] = [
                 'current' => $currentVersion,
-                'target' => $latestVersion,
+                'target' => $targetVersion ?: $latestVersion,
                 'constraint' => $constraint,
                 'has_update' => $hasUpdate,
                 'selected' => $hasUpdate,
-                'versions' => $this->getAllStableVersionsFromPackagist($package)
+                // Only show upgrade options (>= current + strictly greater), to avoid user selecting downgrades
+                'versions' => $currentVersion
+                    ? array_values(array_filter($allStableVersions, fn($v) => $this->versionCompare($currentVersion, $v) < 0))
+                    : $allStableVersions,
             ];
         }
 
@@ -85,9 +101,13 @@ class PackageVersionService
                     $stableVersions = array_filter($versions, function($v) {
                         return !preg_match('/(?:dev|alpha|beta|RC)/i', $v);
                     });
-                    
-                    $latest = !empty($stableVersions) ? max($stableVersions) : (count($versions) ? max($versions) : null);
-                    return $latest ? ltrim($latest, 'v') : null;
+
+                    // Normalize (strip leading v) and sort using semantic version_compare
+                    $normalized = array_map(fn($v) => ltrim($v, 'v'), $stableVersions ?: $versions);
+                    usort($normalized, 'version_compare');
+                    $normalized = array_reverse($normalized); // newest first
+                    $latest = $normalized[0] ?? null;
+                    return $latest ?: null;
                 }
             }
         } catch (\Exception $e) {
@@ -98,35 +118,49 @@ class PackageVersionService
     }
 
     /**
-     * Get all stable versions of a package
+     * Get all stable versions from Packagist for a package with caching
      */
-    public function getAllStableVersionsFromPackagist($package)
+    protected function getAllStableVersionsFromPackagist($package)
     {
+        $cacheKey = "package_versions_{$package}";
+        
+        // Check cache first (1 hour TTL)
+        if (Cache::has($cacheKey)) {
+            return Cache::get($cacheKey);
+        }
+        
         try {
-            $response = Http::timeout($this->config['sources']['packagist']['timeout'] ?? 10)
-                ->get("{$this->config['sources']['packagist']['api_url']}/{$package}.json");
-
+            $response = Http::timeout(10)->get("https://repo.packagist.org/p2/{$package}.json");
             if ($response->successful()) {
                 $data = $response->json();
                 if (!empty($data['packages'][$package])) {
                     $versions = array_column($data['packages'][$package], 'version');
+                    // Filter for stable versions only
                     $stable = array_filter($versions, function($v) {
                         return !preg_match('/(?:dev|alpha|beta|RC)/i', $v);
                     });
-                    
                     if (empty($stable)) {
-                        $stable = $versions; // fallback if no stable found
+                        $stable = $versions; // fallback to all if none found
                     }
+                    // Normalize and sort semantically
+                    $normalized = array_map(function($v) {
+                        return ltrim($v, 'v');
+                    }, $stable);
+                    usort($normalized, function($a, $b) {
+                        return version_compare($b, $a); // Descending order (newest first)
+                    });
                     
-                    $normalized = array_map(fn($v) => ltrim($v, 'v'), $stable);
-                    usort($normalized, 'version_compare');
-                    return array_reverse($normalized); // newest first
+                    // Cache for 1 hour
+                    Cache::put($cacheKey, $normalized, now()->addHour());
+                    return $normalized;
                 }
             }
         } catch (\Exception $e) {
-            Log::error("Failed to fetch versions for {$package}: " . $e->getMessage());
+            // Return empty array on failure
         }
         
+        // Cache empty result for 5 minutes to avoid repeated failures
+        Cache::put($cacheKey, [], now()->addMinutes(5));
         return [];
     }
 

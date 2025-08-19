@@ -13,7 +13,7 @@ class RunUpgradeCommand extends Command
      *
      * @var string
      */
-    protected $signature = 'upgrader:run {--packages=* : Specific packages to upgrade}';
+    protected $signature = 'upgrader:run {--packages=* : Specific packages to upgrade} {--yes : Assume yes and do not prompt}';
 
     /**
      * The console command description.
@@ -78,16 +78,23 @@ class RunUpgradeCommand extends Command
             }
             
             $this->info('Found ' . count($packagesToUpgrade) . ' packages to update.');
-            
-            if (!$this->confirm('Do you want to continue with the upgrade?', true)) {
-                $this->info('Upgrade cancelled.');
-                return 0;
+            // Prompt only if interactive and not forced
+            $shouldPrompt = $this->input->isInteractive() && !$this->option('yes') && !$this->option('no-interaction');
+            if ($shouldPrompt) {
+                if (!$this->confirm('Do you want to continue with the upgrade?', true)) {
+                    $this->info('Upgrade cancelled.');
+                    return 0;
+                }
             }
         }
         
         // Run composer update
         $this->info('Running composer update...');
         $logFile = storage_path('logs/upgrade.log');
+        // Ensure log directory exists
+        if (!is_dir(dirname($logFile))) {
+            @mkdir(dirname($logFile), 0755, true);
+        }
         
         // Clear previous log
         if (file_exists($logFile)) {
@@ -96,12 +103,22 @@ class RunUpgradeCommand extends Command
         
         // Run composer update for the selected packages
         $packagesList = implode(' ', $packagesToUpgrade);
-        $command = "composer update $packagesList --with-all-dependencies --no-interaction --no-progress > " . escapeshellarg($logFile) . " 2>&1";
-        
+        $projectRoot = base_path();
         if (strtoupper(substr(PHP_OS, 0, 3)) === 'WIN') {
-            pclose(popen("start /B " . $command . "", "r"));
+            // Windows: use cmd-compatible quoting with double quotes
+            $composerCmd = 'composer --working-dir=' . '"' . str_replace('"', '""', $projectRoot) . '"'
+                . ' update ' . $packagesList
+                . ' --with-all-dependencies --no-interaction --no-progress';
+            $redirected = $composerCmd . ' > ' . '"' . str_replace('"', '""', $logFile) . '"' . ' 2>&1';
+            $winCmd = 'start "" /B cmd /C ' . '"' . $redirected . '"';
+            pclose(popen($winCmd, 'r'));
         } else {
-            exec("nohup $command > /dev/null 2>&1 &");
+            // POSIX
+            $composerCmd = 'composer --working-dir=' . escapeshellarg($projectRoot)
+                . ' update ' . $packagesList
+                . ' --with-all-dependencies --no-interaction --no-progress';
+            $redirected = $composerCmd . ' > ' . escapeshellarg($logFile) . ' 2>&1';
+            exec("nohup $redirected > /dev/null 2>&1 &");
         }
         
         $this->info('Upgrade process started in the background.');

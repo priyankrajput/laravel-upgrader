@@ -205,6 +205,29 @@
     </div>
 </div>
 
+<!-- Upgrade Progress Overlay -->
+<div id="loader-overlay" class="hidden fixed inset-0 bg-white/90 z-50 flex items-center justify-center">
+    <div class="w-full max-w-xl px-6">
+        <div class="text-center font-semibold text-gray-800 mb-4">Updating packages, please wait...</div>
+        <div class="w-full bg-gray-200 rounded h-10 overflow-hidden">
+            <div class="h-full w-full bg-blue-600 animate-pulse flex items-center justify-center text-white text-sm">
+                Processing...
+            </div>
+        </div>
+        <pre id="upgrade-log" class="hidden mt-4 w-full max-h-60 bg-gray-900 text-green-200 rounded p-4 overflow-auto text-sm"></pre>
+    </div>
+    <style>
+        /* Prevent background scroll while overlay visible */
+        body.overlay-open { overflow: hidden; }
+    </style>
+    <script>
+        // Helper to toggle body scroll lock
+        function setOverlayOpen(open){
+            const b=document.body; if(!b) return; open? b.classList.add('overlay-open') : b.classList.remove('overlay-open');
+        }
+    </script>
+</div>
+
 <!-- Changelog Modals -->
 @if(isset($changelogs))
     @foreach($changelogs as $package => $releases)
@@ -243,6 +266,11 @@
         const form = document.getElementById('upgradeForm');
         const filter = document.getElementById('packageFilter');
         const table = document.getElementById('packagesTable');
+        // Overlay & log elements
+        const loader = document.getElementById('loader-overlay');
+        const logBox = document.getElementById('upgrade-log');
+        const logUrl = '{{ route('upgrader.log') }}';
+        let pollInterval = null;
         
         // Package search filter
         if (filter) {
@@ -285,16 +313,77 @@
             upgradeButton.disabled = !anyChecked;
         }
         
-        // Confirm before submitting
-        form.addEventListener('submit', function(e) {
+        // Start polling the upgrade log
+        function startLogPolling(){
+            if (logBox) { logBox.classList.remove('hidden'); }
+            if (pollInterval) { clearInterval(pollInterval); }
+            let lastMsg = '';
+            pollInterval = setInterval(async function(){
+                try {
+                    const res = await fetch(logUrl, { headers: { 'Accept': 'text/plain' }});
+                    if (res.ok) {
+                        const text = await res.text();
+                        if (logBox) {
+                            logBox.textContent = (text && text.trim().length > 0) ? text : '';
+                            logBox.scrollTop = logBox.scrollHeight;
+                        }
+                        const lines = (text||'').split('\n').filter(Boolean);
+                        const lastLine = lines.slice(-2).join(' ').toLowerCase();
+                        let status = '';
+                        if (/error|failed|exception|could not|not found|exit code/.test(lastLine)) {
+                            status = 'error';
+                        } else if (/successfully updated|nothing to install|package manifest generated|generating optimized autoload files/.test(lastLine)) {
+                            status = 'success';
+                        }
+                        if (status && status !== lastMsg) {
+                            if (loader) loader.querySelector('.animate-pulse')?.classList.remove('animate-pulse');
+                            clearInterval(pollInterval);
+                            lastMsg = status;
+                        }
+                    }
+                } catch (e) {
+                    if (logBox) logBox.textContent = 'Could not fetch log.';
+                }
+            }, 2000);
+        }
+
+        // Enhanced submit: async start + overlay + log polling
+        form.addEventListener('submit', async function(e) {
+            e.preventDefault();
             if (!confirm('Are you sure you want to update the selected packages? This action cannot be undone.')) {
-                e.preventDefault();
                 return false;
             }
+            if (loader) { loader.classList.remove('hidden'); setOverlayOpen(true); }
+            if (logBox) { logBox.textContent = ''; }
+            startLogPolling();
             upgradeButton.disabled = true;
             upgradeButton.innerHTML = '<svg class="animate-spin -ml-1 mr-3 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>Updating...';
-            return true;
+
+            const formData = new FormData(form);
+            const token = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
+            try {
+                const res = await fetch(form.action, {
+                    method: 'POST',
+                    headers: { 'X-CSRF-TOKEN': token, 'Accept': 'application/json' },
+                    body: formData
+                });
+                if (!res.ok) {
+                    // Quick error polling to surface failures early
+                    setTimeout(async () => {
+                        try { const r = await fetch(logUrl); if (r.ok) { const t = await r.text(); if (logBox) logBox.textContent = t || 'Upgrade failed. No output.'; } } catch {}
+                    }, 1500);
+                }
+            } catch (err) {
+                if (logBox) logBox.textContent = 'Upgrade request failed to start. Please check server logs.';
+            }
+            return false;
         });
+
+        // If page reloaded during an in-progress upgrade, show overlay and start polling
+        if (window.location.hash === '#upgrade-in-progress') {
+            if (loader) { loader.classList.remove('hidden'); setOverlayOpen(true); }
+            startLogPolling();
+        }
     });
     
     // Modal functions

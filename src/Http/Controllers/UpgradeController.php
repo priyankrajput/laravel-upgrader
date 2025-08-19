@@ -85,23 +85,61 @@ class UpgradeController extends Controller
             $this->packageService->updateComposerConstraints($selectedTargets);
         }
 
-        return $this->runComposerUpdate();
+        try {
+            // Start composer update in the background, outputting to log
+            $logFile = storage_path('logs/upgrade.log');
+            if (!is_dir(dirname($logFile))) {
+                @mkdir(dirname($logFile), 0755, true);
+            }
+            if (file_exists($logFile)) {
+                @unlink($logFile);
+            }
+
+            // Build composer command with selected packages
+            $packagesToUpgrade = (array) $request->input('packages', []);
+            $packagesList = !empty($packagesToUpgrade) ? implode(' ', $packagesToUpgrade) : '';
+            $composerCmd = 'composer update ' . $packagesList . ' --with-all-dependencies';
+            
+            if (strtoupper(substr(PHP_OS, 0, 3)) === 'WIN') {
+                // Windows background execution
+                $cmd = 'start /B cmd /C "' . $composerCmd . ' > ' . str_replace('/', '\\', $logFile) . ' 2>&1"';
+            } else {
+                // Unix background execution
+                $cmd = $composerCmd . ' > "' . $logFile . '" 2>&1 &';
+            }
+            
+            // Use proc_open for better control
+            proc_close(proc_open($cmd, [], $pipes, base_path()));
+            
+            // Write starting message to log
+            file_put_contents($logFile, "[Upgrade started at " . date('Y-m-d H:i:s') . "]\n", FILE_APPEND);
+
+            // For AJAX form: return JSON immediately. The UI will poll /upgrade/log
+            if ($request->expectsJson()) {
+                return response()->json(['status' => 'started']);
+            }
+            // Non-AJAX fallback: redirect back with a message
+            return redirect()->route('upgrader.index')->with('success', 'Upgrade started. Monitor progress below.');
+            
+        } catch (\Exception $e) {
+            if ($request->expectsJson()) {
+                return response()->json(['status' => 'error', 'message' => $e->getMessage()], 500);
+            }
+            return redirect()->route('upgrader.index')->with('error', 'Upgrade failed to start: ' . $e->getMessage());
+        }
     }
 
 
 
     private function runComposerUpdate()
     {
+        // Deprecated in web flow: updates are now launched in background via upgrader:run
         $output = [];
         $returnVar = 0;
-        
         exec('composer update 2>&1', $output, $returnVar);
-        
-        if ($returnVar === 0) {
-            return redirect()->route('upgrader.index')->with('success', 'Packages updated successfully!');
-        } else {
-            return redirect()->route('upgrader.index')->with('error', 'Update failed: ' . implode("\n", $output));
-        }
+        return $returnVar === 0
+            ? redirect()->route('upgrader.index')->with('success', 'Packages updated successfully!')
+            : redirect()->route('upgrader.index')->with('error', 'Update failed: ' . implode("\n", $output));
     }
 
     public function autoFix(Request $request)
