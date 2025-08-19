@@ -1,6 +1,6 @@
 <?php
 
-namespace priyank\LaravelUpgrader\Services;
+namespace priyankrajput\LaravelUpgrader\Services;
 
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Cache;

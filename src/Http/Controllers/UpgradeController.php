@@ -1,22 +1,25 @@
 <?php
 
-namespace priyank\LaravelUpgrader\Http\Controllers;
+namespace priyankrajput\LaravelUpgrader\Http\Controllers;
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Routing\Controller;
-use priyank\LaravelUpgrader\Services\PackageVersionService;
+use priyankrajput\LaravelUpgrader\Services\PackageVersionService;
+use priyankrajput\LaravelUpgrader\Services\BackupService;
 
 ini_set('max_execution_time', 300); // 5 minutes
 class UpgradeController extends Controller
 {
     protected $config;
     protected $packageService;
+    protected $backupService;
 
-    public function __construct(PackageVersionService $packageService)
+    public function __construct(PackageVersionService $packageService, BackupService $backupService)
     {
         $this->config = config('upgrader');
         $this->packageService = $packageService;
+        $this->backupService = $backupService;
     }
 
     public function index()
@@ -86,6 +89,12 @@ class UpgradeController extends Controller
         }
 
         try {
+            // Determine selected packages
+            $packagesToUpgrade = (array) $request->input('packages', []);
+            
+            // Create backup before upgrade
+            $backupId = $this->backupService->createBackup($packagesToUpgrade);
+            
             // Start composer update in the background, outputting to log
             $logFile = storage_path('logs/upgrade.log');
             if (!is_dir(dirname($logFile))) {
@@ -96,7 +105,6 @@ class UpgradeController extends Controller
             }
 
             // Build composer command with selected packages
-            $packagesToUpgrade = (array) $request->input('packages', []);
             $packagesList = !empty($packagesToUpgrade) ? implode(' ', $packagesToUpgrade) : '';
             $composerCmd = 'composer update ' . $packagesList . ' --with-all-dependencies';
             
@@ -111,8 +119,13 @@ class UpgradeController extends Controller
             // Use proc_open for better control
             proc_close(proc_open($cmd, [], $pipes, base_path()));
             
-            // Write starting message to log
-            file_put_contents($logFile, "[Upgrade started at " . date('Y-m-d H:i:s') . "]\n", FILE_APPEND);
+            // Write starting message to log with backup info
+            $startMessage = "[Upgrade started at " . date('Y-m-d H:i:s') . "]\n";
+            $startMessage .= "[Backup created: {$backupId}]\n";
+            file_put_contents($logFile, $startMessage, FILE_APPEND);
+            
+            // Clean up old backups (keep last 5)
+            $this->backupService->cleanupOldBackups(5);
 
             // For AJAX form: return JSON immediately. The UI will poll /upgrade/log
             if ($request->expectsJson()) {
@@ -272,6 +285,95 @@ class UpgradeController extends Controller
         $changes[] = 'Updated import statements if needed';
         
         return $changes;
+    }
+
+    /**
+     * Show available backups
+     */
+    public function backups()
+    {
+        $backups = $this->backupService->getBackups();
+        
+        if (request()->expectsJson()) {
+            return response()->json(['backups' => $backups]);
+        }
+        
+        return view('upgrader::backups', compact('backups'));
+    }
+
+    /**
+     * Restore from backup
+     */
+    public function restore(Request $request)
+    {
+        $request->validate([
+            'backup_id' => 'required|string',
+            'confirm' => 'required|accepted'
+        ]);
+
+        try {
+            $backupId = $request->input('backup_id');
+            $logFile = $this->backupService->restoreBackup($backupId);
+            
+            if ($request->expectsJson()) {
+                return response()->json([
+                    'status' => 'started',
+                    'message' => 'Restore started',
+                    'log_file' => $logFile
+                ]);
+            }
+            
+            return redirect()->route('upgrader.index')
+                ->with('success', 'Restore started. Check logs for progress.');
+                
+        } catch (\Exception $e) {
+            if ($request->expectsJson()) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => $e->getMessage()
+                ], 500);
+            }
+            
+            return redirect()->route('upgrader.index')
+                ->with('error', 'Restore failed: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * Delete backup
+     */
+    public function deleteBackup(Request $request)
+    {
+        $request->validate([
+            'backup_id' => 'required|string'
+        ]);
+
+        try {
+            $backupId = $request->input('backup_id');
+            $deleted = $this->backupService->deleteBackup($backupId);
+            
+            if ($request->expectsJson()) {
+                return response()->json([
+                    'status' => $deleted ? 'success' : 'error',
+                    'message' => $deleted ? 'Backup deleted' : 'Backup not found'
+                ]);
+            }
+            
+            return redirect()->route('upgrader.backups')
+                ->with($deleted ? 'success' : 'error', 
+                       $deleted ? 'Backup deleted successfully' : 'Backup not found');
+                
+        } catch (\Exception $e) {
+            if ($request->expectsJson()) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => $e->getMessage()
+                ], 500);
+            }
+            
+            return redirect()->route('upgrader.backups')
+                ->with('error', 'Failed to delete backup: ' . $e->getMessage());
+        }
     }
 
 }

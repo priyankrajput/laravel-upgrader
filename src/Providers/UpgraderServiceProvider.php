@@ -1,10 +1,10 @@
 <?php
 
-namespace priyank\LaravelUpgrader\Providers;
+namespace priyankrajput\LaravelUpgrader\Providers;
 
 use Illuminate\Support\ServiceProvider;
-use priyank\LaravelUpgrader\Services\PackageVersionService;
-use priyank\LaravelUpgrader\Commands\RunUpgradeCommand;
+use priyankrajput\LaravelUpgrader\Services\PackageVersionService;
+use priyankrajput\LaravelUpgrader\Commands\RunUpgradeCommand;
 
 class UpgraderServiceProvider extends ServiceProvider
 {

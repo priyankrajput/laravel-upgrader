@@ -1,6 +1,6 @@
 <?php
 
-namespace priyank\LaravelUpgrader\Http\Controllers;
+namespace priyankrajput\LaravelUpgrader\Http\Controllers;
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\File;

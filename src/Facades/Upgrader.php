@@ -1,6 +1,6 @@
 <?php
 
-namespace priyank\LaravelUpgrader\Facades;
+namespace priyankrajput\LaravelUpgrader\Facades;
 
 use Illuminate\Support\Facades\Facade;
 
@@ -12,7 +12,7 @@ use Illuminate\Support\Facades\Facade;
  * @method static int versionCompare(string $version1, string $version2)
  * @method static void updateComposerConstraints(array $selectedTargets)
  * 
- * @see \priyank\LaravelUpgrader\Services\PackageVersionService
+ * @see \priyankrajput\LaravelUpgrader\Services\PackageVersionService
  */
 class Upgrader extends Facade
 {

@@ -1,10 +1,10 @@
 <?php
 
-namespace priyank\LaravelUpgrader\Commands;
+namespace priyankrajput\LaravelUpgrader\Commands;
 
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\File;
-use priyank\LaravelUpgrader\Services\PackageVersionService;
+use priyankrajput\LaravelUpgrader\Services\PackageVersionService;
 
 class RunUpgradeCommand extends Command
 {

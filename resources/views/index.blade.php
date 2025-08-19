@@ -192,13 +192,19 @@
                     <div class="flex items-center">
                         <input type="checkbox" id="confirm" name="confirm" class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded" required>
                         <label for="confirm" class="ml-2 block text-sm text-gray-900">
-                            I have backed up my application and database
+                            I understand a backup will be created automatically
                         </label>
                     </div>
-                    <button type="submit" id="upgradeButton" class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed" {{ $hasUpdates ? '' : 'disabled' }}>
-                        <i class="fas fa-sync-alt mr-2"></i>
-                        Update Selected
-                    </button>
+                    <div class="flex space-x-3">
+                        <button type="button" onclick="showBackups()" class="inline-flex items-center px-4 py-2 border border-orange-600 text-sm font-medium rounded-md text-orange-600 hover:bg-orange-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-orange-500">
+                            <i class="fas fa-history mr-2"></i>
+                            Backups & Restore
+                        </button>
+                        <button type="submit" id="upgradeButton" class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed" {{ $hasUpdates ? '' : 'disabled' }}>
+                            <i class="fas fa-sync-alt mr-2"></i>
+                            Update Selected
+                        </button>
+                    </div>
                 </div>
             </form>
         </div>
@@ -439,6 +445,143 @@
         .finally(() => {
             button.disabled = false;
             button.innerHTML = originalContent;
+        });
+    }
+
+    // Show backups modal
+    function showBackups() {
+        fetch('{{ route("upgrader.backups") }}', {
+            headers: {
+                'Accept': 'application/json',
+                'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            showBackupsModal(data.backups);
+        })
+        .catch(error => {
+            console.error('Error fetching backups:', error);
+            alert('Failed to load backups');
+        });
+    }
+
+    function showBackupsModal(backups) {
+        const modalHtml = `
+            <div id="backups-modal" class="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center">
+                <div class="bg-white rounded-lg shadow-xl max-w-4xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+                    <div class="p-6 border-b border-gray-200">
+                        <div class="flex justify-between items-center">
+                            <h3 class="text-lg font-semibold text-gray-900">Backups & Restore</h3>
+                            <button onclick="closeBackupsModal()" class="text-gray-400 hover:text-gray-600">
+                                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="p-6">
+                        ${backups.length === 0 ? 
+                            '<p class="text-gray-500 text-center py-8">No backups available</p>' :
+                            `<div class="space-y-4">
+                                ${backups.map(backup => `
+                                    <div class="border border-gray-200 rounded-lg p-4">
+                                        <div class="flex justify-between items-start">
+                                            <div>
+                                                <h4 class="font-medium text-gray-900">${backup.id}</h4>
+                                                <p class="text-sm text-gray-600">Created: ${new Date(backup.created_at).toLocaleString()}</p>
+                                                <p class="text-sm text-gray-600">Packages: ${backup.packages.join(', ') || 'All packages'}</p>
+                                            </div>
+                                            <div class="flex space-x-2">
+                                                <button onclick="restoreBackup('${backup.id}')" class="bg-green-600 hover:bg-green-700 text-white px-3 py-1 rounded text-sm">
+                                                    Restore
+                                                </button>
+                                                <button onclick="deleteBackup('${backup.id}')" class="bg-red-600 hover:bg-red-700 text-white px-3 py-1 rounded text-sm">
+                                                    Delete
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                `).join('')}
+                            </div>`
+                        }
+                    </div>
+                </div>
+            </div>
+        `;
+        document.body.insertAdjacentHTML('beforeend', modalHtml);
+    }
+
+    function closeBackupsModal() {
+        const modal = document.getElementById('backups-modal');
+        if (modal) {
+            modal.remove();
+        }
+    }
+
+    function restoreBackup(backupId) {
+        if (!confirm(`Are you sure you want to restore from backup ${backupId}? This will revert your packages to their previous versions.`)) {
+            return;
+        }
+
+        fetch('{{ route("upgrader.restore") }}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json',
+                'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
+            },
+            body: JSON.stringify({
+                backup_id: backupId,
+                confirm: 1
+            })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === 'started') {
+                closeBackupsModal();
+                showOverlay();
+                pollUpgradeLog(); // Reuse existing log polling
+                alert('Restore started. Monitor progress in the overlay.');
+            } else {
+                alert('Restore failed: ' + data.message);
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('Restore failed: Network error');
+        });
+    }
+
+    function deleteBackup(backupId) {
+        if (!confirm(`Are you sure you want to delete backup ${backupId}? This action cannot be undone.`)) {
+            return;
+        }
+
+        fetch('{{ route("upgrader.delete-backup") }}', {
+            method: 'DELETE',
+            headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json',
+                'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
+            },
+            body: JSON.stringify({
+                backup_id: backupId
+            })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === 'success') {
+                // Refresh the backups modal
+                closeBackupsModal();
+                showBackups();
+            } else {
+                alert('Delete failed: ' + data.message);
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('Delete failed: Network error');
         });
     }
 </script>

@@ -16,13 +16,13 @@
     },
     "autoload": {
         "psr-4": {
-            "priyank\\LaravelUpgrader\\": "src/"
+            "priyankrajput\\LaravelUpgrader\\": "src/"
         }
     },
     "extra": {
         "laravel": {
             "providers": [
-                "priyank\\LaravelUpgrader\\Providers\\UpgraderServiceProvider"
+                "priyankrajput\\LaravelUpgrader\\Providers\\UpgraderServiceProvider"
             ]
         }
     },
