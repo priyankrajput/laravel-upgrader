@@ -320,37 +320,133 @@
         }
         
         // Start polling the upgrade log
-        function startLogPolling(){
-            if (logBox) { logBox.classList.remove('hidden'); }
-            if (pollInterval) { clearInterval(pollInterval); }
-            let lastMsg = '';
-            pollInterval = setInterval(async function(){
-                try {
-                    const res = await fetch(logUrl, { headers: { 'Accept': 'text/plain' }});
-                    if (res.ok) {
-                        const text = await res.text();
-                        if (logBox) {
-                            logBox.textContent = (text && text.trim().length > 0) ? text : '';
-                            logBox.scrollTop = logBox.scrollHeight;
+        function pollUpgradeLog() {
+            if (isPolling) return;
+            isPolling = true;
+            
+            pollInterval = setInterval(() => {
+                fetch('{{ route("upgrader.log") }}')
+                    .then(response => response.text())
+                    .then(data => {
+                        const logArea = document.getElementById('upgrade-log');
+                        if (logArea) {
+                            logArea.textContent = data;
+                            logArea.scrollTop = logArea.scrollHeight;
                         }
-                        const lines = (text||'').split('\n').filter(Boolean);
-                        const lastLine = lines.slice(-2).join(' ').toLowerCase();
-                        let status = '';
-                        if (/error|failed|exception|could not|not found|exit code/.test(lastLine)) {
-                            status = 'error';
-                        } else if (/successfully updated|nothing to install|package manifest generated|generating optimized autoload files/.test(lastLine)) {
-                            status = 'success';
+                        
+                        // Check for completion indicators in the log
+                        if (data.includes('Nothing to modify in lock file') || 
+                            data.includes('Package operations:') ||
+                            data.includes('Generating optimized autoload files') ||
+                            data.includes('> Illuminate\\Foundation\\ComposerScripts::postAutoloadDump')) {
+                            // Success indicators found
+                            stopPollingAndShowResult('success', 'Upgrade completed successfully!');
+                        } else if (data.includes('Installation failed') ||
+                                   data.includes('Your requirements could not be resolved') ||
+                                   data.includes('Fatal error') ||
+                                   data.includes('Error:') ||
+                                   data.includes('Exception:')) {
+                            // Error indicators found
+                            stopPollingAndShowResult('error', 'Upgrade failed. Check the log for details.');
                         }
-                        if (status && status !== lastMsg) {
-                            if (loader) loader.querySelector('.animate-pulse')?.classList.remove('animate-pulse');
-                            clearInterval(pollInterval);
-                            lastMsg = status;
-                        }
-                    }
-                } catch (e) {
-                    if (logBox) logBox.textContent = 'Could not fetch log.';
-                }
+                    })
+                    .catch(error => {
+                        console.error('Error fetching log:', error);
+                        stopPollingAndShowResult('error', 'Failed to fetch upgrade log.');
+                    });
             }, 2000);
+        }
+
+        function stopPollingAndShowResult(status, message) {
+            // Stop polling
+            if (pollInterval) {
+                clearInterval(pollInterval);
+                pollInterval = null;
+            }
+            isPolling = false;
+            
+            // Hide overlay after a short delay to let user see final log
+            setTimeout(() => {
+                hideOverlay();
+                showCompletionModal(status, message);
+            }, 2000);
+        }
+
+        function hideOverlay() {
+            const overlay = document.getElementById('loader-overlay');
+            if (overlay) {
+                overlay.classList.add('hidden');
+            }
+            // Re-enable upgrade button
+            const upgradeBtn = document.getElementById('upgradeButton');
+            if (upgradeBtn) {
+                upgradeBtn.disabled = false;
+            }
+        }
+
+        function showCompletionModal(status, message) {
+            const isSuccess = status === 'success';
+            
+            // Get final log content for display
+            let logContent = '';
+            const logArea = document.getElementById('upgrade-log');
+            if (logArea && logArea.textContent) {
+                const lines = logArea.textContent.split('\n');
+                // Show last 10 lines of log
+                logContent = lines.slice(-10).join('\n');
+            }
+            
+            const modalHtml = `
+                <div id="completion-modal" class="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center">
+                    <div class="bg-white rounded-lg shadow-xl max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+                        <div class="p-6">
+                            <div class="flex items-center mb-4">
+                                <div class="flex-shrink-0">
+                                    ${isSuccess ? 
+                                        '<svg class="w-8 h-8 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>' :
+                                        '<svg class="w-8 h-8 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16c-.77.833.192 2.5 1.732 2.5z"></path></svg>'
+                                    }
+                                </div>
+                                <div class="ml-3">
+                                    <h3 class="text-lg font-medium text-gray-900">
+                                        ${isSuccess ? 'Upgrade Complete!' : 'Upgrade Failed'}
+                                    </h3>
+                                    <p class="text-sm text-gray-600">${message}</p>
+                                </div>
+                            </div>
+                            
+                            ${logContent ? `
+                                <div class="mb-6">
+                                    <h4 class="text-sm font-medium text-gray-900 mb-2">Final Output:</h4>
+                                    <div class="bg-gray-100 rounded-lg p-3 text-xs font-mono text-gray-800 max-h-40 overflow-y-auto">
+                                        <pre>${logContent}</pre>
+                                    </div>
+                                </div>
+                            ` : ''}
+                            
+                            <div class="flex justify-end space-x-3">
+                                ${!isSuccess ? 
+                                    '<button onclick="closeCompletionModal(); showBackups();" class="bg-orange-600 hover:bg-orange-700 text-white px-4 py-2 rounded text-sm">View Backups</button>' : 
+                                    ''
+                                }
+                                <button onclick="closeCompletionModal()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded text-sm">
+                                    ${isSuccess ? 'Refresh Page' : 'Close'}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+            document.body.insertAdjacentHTML('beforeend', modalHtml);
+        }
+
+        function closeCompletionModal() {
+            const modal = document.getElementById('completion-modal');
+            if (modal) {
+                modal.remove();
+            }
+            // Refresh page on success to show updated package versions
+            location.reload();
         }
 
         // Enhanced submit: async start + overlay + log polling
@@ -359,9 +455,11 @@
             if (!confirm('Are you sure you want to update the selected packages? This action cannot be undone.')) {
                 return false;
             }
-            if (loader) { loader.classList.remove('hidden'); setOverlayOpen(true); }
-            if (logBox) { logBox.textContent = ''; }
-            startLogPolling();
+            // Show overlay
+            const overlay = document.getElementById('loader-overlay');
+            if (overlay) {
+                overlay.classList.remove('hidden');
+            }
             upgradeButton.disabled = true;
             upgradeButton.innerHTML = '<svg class="animate-spin -ml-1 mr-3 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>Updating...';
 
@@ -373,22 +471,34 @@
                     headers: { 'X-CSRF-TOKEN': token, 'Accept': 'application/json' },
                     body: formData
                 });
-                if (!res.ok) {
-                    // Quick error polling to surface failures early
-                    setTimeout(async () => {
-                        try { const r = await fetch(logUrl); if (r.ok) { const t = await r.text(); if (logBox) logBox.textContent = t || 'Upgrade failed. No output.'; } } catch {}
-                    }, 1500);
+                
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data.status === 'started') {
+                        // Start polling the upgrade log
+                        pollUpgradeLog();
+                    } else {
+                        hideOverlay();
+                        showCompletionModal('error', data.message || 'Failed to start upgrade');
+                    }
+                } else {
+                    hideOverlay();
+                    showCompletionModal('error', 'Failed to start upgrade. Server error.');
                 }
             } catch (err) {
-                if (logBox) logBox.textContent = 'Upgrade request failed to start. Please check server logs.';
+                hideOverlay();
+                showCompletionModal('error', 'Upgrade request failed to start. Please check server logs.');
             }
             return false;
         });
 
         // If page reloaded during an in-progress upgrade, show overlay and start polling
         if (window.location.hash === '#upgrade-in-progress') {
-            if (loader) { loader.classList.remove('hidden'); setOverlayOpen(true); }
-            startLogPolling();
+            const overlay = document.getElementById('loader-overlay');
+            if (overlay) {
+                overlay.classList.remove('hidden');
+            }
+            pollUpgradeLog();
         }
     });
     

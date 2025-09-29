@@ -47,7 +47,7 @@ class UpgradeController extends Controller
                 'updates' => $availableUpdates,
                 'changelogs' => $changelogs,
                 'current' => $currentVersions
-            ], now()->addMinutes($this->config['cache']['duration'] ?? 1440));
+            ], now()->addMinutes((int)$this->config['cache']['duration'] ?? 1440));
         }
 
         foreach ($availableUpdates as &$data) {
