@@ -17,11 +17,26 @@ class UpgradeLogController extends Controller
 
     public function show()
     {
-        if (!File::exists($this->logPath)) {
+        // Prefer current per-run log if pointer exists
+        $logsDir = storage_path('logs');
+        $pointer = $logsDir . DIRECTORY_SEPARATOR . 'upgrade.current';
+        $activeLog = null;
+        if (File::exists($pointer)) {
+            $basename = trim(@File::get($pointer));
+            if ($basename) {
+                $candidate = $logsDir . DIRECTORY_SEPARATOR . $basename;
+                if (File::exists($candidate)) {
+                    $activeLog = $candidate;
+                }
+            }
+        }
+
+        $path = $activeLog ?: $this->logPath;
+        if (!File::exists($path)) {
             return response('', 204);
         }
 
-        $content = File::get($this->logPath);
+        $content = @File::get($path) ?: '';
         return response($content, 200, ['Content-Type' => 'text/plain']);
     }
 }

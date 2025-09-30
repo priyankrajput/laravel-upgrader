@@ -95,34 +95,34 @@ class UpgradeController extends Controller
             // Create backup before upgrade
             $backupId = $this->backupService->createBackup($packagesToUpgrade);
             
-            // Start composer update in the background, outputting to log
-            $logFile = storage_path('logs/upgrade.log');
-            if (!is_dir(dirname($logFile))) {
-                @mkdir(dirname($logFile), 0755, true);
+            // Start composer update in the background, outputting to a unique per-run log
+            $logDir = storage_path('logs');
+            if (!is_dir($logDir)) {
+                @mkdir($logDir, 0755, true);
             }
-            if (file_exists($logFile)) {
-                @unlink($logFile);
-            }
+            $runId = date('Ymd_His') . '-' . bin2hex(random_bytes(3));
+            $logFile = $logDir . DIRECTORY_SEPARATOR . 'upgrade-' . $runId . '.log';
+
+            // Pre-write start banner BEFORE launching composer, and write pointer file
+            $startMessage = "[Upgrade started at " . date('Y-m-d H:i:s') . "]\n";
+            $startMessage .= "[Backup created: {$backupId}]\n";
+            @file_put_contents($logFile, $startMessage);
+            @file_put_contents($logDir . DIRECTORY_SEPARATOR . 'upgrade.current', basename($logFile));
 
             // Build composer command with selected packages
             $packagesList = !empty($packagesToUpgrade) ? implode(' ', $packagesToUpgrade) : '';
             $composerCmd = 'composer update ' . $packagesList . ' --with-all-dependencies';
             
             if (strtoupper(substr(PHP_OS, 0, 3)) === 'WIN') {
-                // Windows background execution
-                $cmd = 'start /B cmd /C "' . $composerCmd . ' > ' . str_replace('/', '\\', $logFile) . ' 2>&1"';
+                // Windows background execution (append)
+                $cmd = 'start /B cmd /C "' . $composerCmd . ' >> ' . str_replace('/', '\\', $logFile) . ' 2>&1"';
             } else {
-                // Unix background execution
-                $cmd = $composerCmd . ' > "' . $logFile . '" 2>&1 &';
+                // Unix background execution (append)
+                $cmd = 'sh -c "' . $composerCmd . ' >> ' . escapeshellarg($logFile) . ' 2>&1 &"';
             }
             
             // Use proc_open for better control
             proc_close(proc_open($cmd, [], $pipes, base_path()));
-            
-            // Write starting message to log with backup info
-            $startMessage = "[Upgrade started at " . date('Y-m-d H:i:s') . "]\n";
-            $startMessage .= "[Backup created: {$backupId}]\n";
-            file_put_contents($logFile, $startMessage, FILE_APPEND);
             
             // Clean up old backups (keep last 5)
             $this->backupService->cleanupOldBackups(5);
