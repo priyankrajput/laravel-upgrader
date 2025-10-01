@@ -93,7 +93,13 @@ class UpgradeController extends Controller
             $packagesToUpgrade = (array) $request->input('packages', []);
             
             // Create backup before upgrade
-            $backupId = $this->backupService->createBackup($packagesToUpgrade);
+            $backupId = 'manual';
+            try {
+                $backupId = $this->backupService->createBackup($packagesToUpgrade);
+            } catch (\Exception $backupError) {
+                \Log::warning('Backup creation failed: ' . $backupError->getMessage());
+                // Continue without backup if it fails
+            }
             
             // Start composer update in the background, outputting to a unique per-run log
             $logDir = storage_path('logs');
@@ -114,11 +120,14 @@ class UpgradeController extends Controller
             $composerCmd = 'composer update ' . $packagesList . ' --with-all-dependencies';
             
             if (strtoupper(substr(PHP_OS, 0, 3)) === 'WIN') {
-                // Windows background execution (append)
-                $cmd = 'start /B cmd /C "' . $composerCmd . ' >> ' . str_replace('/', '\\', $logFile) . ' 2>&1"';
+                // Windows background execution (append) - use full path to composer if needed
+                $composerPath = config('upgrader.composer_path', 'composer');
+                $winLog = str_replace('/', '\\', $logFile);
+                $cmd = 'start /B cmd /C "' . $composerPath . ' update ' . $packagesList . ' --with-all-dependencies >> "' . $winLog . '" 2>&1"';
             } else {
                 // Unix background execution (append)
-                $cmd = 'sh -c "' . $composerCmd . ' >> ' . escapeshellarg($logFile) . ' 2>&1 &"';
+                $composerPath = config('upgrader.composer_path', 'composer');
+                $cmd = 'sh -c "' . $composerPath . ' update ' . $packagesList . ' --with-all-dependencies >> ' . escapeshellarg($logFile) . ' 2>&1 &"';
             }
             
             // Use proc_open for better control

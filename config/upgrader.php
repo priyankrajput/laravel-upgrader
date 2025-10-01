@@ -55,4 +55,16 @@ return [
         'enabled' => true,
         'path' => storage_path('logs/upgrade.log'),
     ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Composer Path
+    |--------------------------------------------------------------------------
+    |
+    | Full path to composer executable. Leave as 'composer' if it's in PATH.
+    | Windows example: 'C:\\ProgramData\\ComposerSetup\\bin\\composer.bat'
+    | Or use: 'php ' . base_path('composer.phar')
+    |
+    */
+    'composer_path' => env('COMPOSER_PATH', 'composer'),
 ];

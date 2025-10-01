@@ -277,6 +277,7 @@
         const logBox = document.getElementById('upgrade-log');
         const logUrl = '{{ route('upgrader.log') }}';
         let pollInterval = null;
+        let isPolling = false;
         
         // Package search filter
         if (filter) {
@@ -384,6 +385,33 @@
             }
         }
 
+        // Make these functions global so onclick can access them
+        window.closeCompletionModal = function() {
+            const modal = document.getElementById('completion-modal');
+            if (modal) {
+                modal.remove();
+            }
+            // Refresh page on success to show updated package versions
+            location.reload();
+        };
+
+        window.showBackups = function() {
+            fetch('{{ route("upgrader.backups") }}', {
+                headers: {
+                    'Accept': 'application/json',
+                    'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                showBackupsModal(data.backups);
+            })
+            .catch(error => {
+                console.error('Error fetching backups:', error);
+                alert('Failed to load backups');
+            });
+        };
+
         function showCompletionModal(status, message) {
             const isSuccess = status === 'success';
             
@@ -440,15 +468,7 @@
             document.body.insertAdjacentHTML('beforeend', modalHtml);
         }
 
-        function closeCompletionModal() {
-            const modal = document.getElementById('completion-modal');
-            if (modal) {
-                modal.remove();
-            }
-            // Refresh page on success to show updated package versions
-            location.reload();
-        }
-
+       
         // Enhanced submit: async start + overlay + log polling
         form.addEventListener('submit', async function(e) {
             e.preventDefault();
@@ -471,6 +491,7 @@
                     headers: { 'X-CSRF-TOKEN': token, 'Accept': 'application/json' },
                     body: formData
                 });
+                console.log(res);
                 
                 if (res.ok) {
                     const data = await res.json();
@@ -487,6 +508,7 @@
                 }
             } catch (err) {
                 hideOverlay();
+                console.log(err);
                 showCompletionModal('error', 'Upgrade request failed to start. Please check server logs.');
             }
             return false;
@@ -502,14 +524,14 @@
         }
     });
     
-    // Modal functions
-    function openChangelogModal(packageId) {
+    // Modal functions - make global for onclick access
+    window.openChangelogModal = function(packageId) {
         document.getElementById('changelog-modal-' + packageId).classList.remove('hidden');
-    }
+    };
     
-    function closeChangelogModal(packageId) {
+    window.closeChangelogModal = function(packageId) {
         document.getElementById('changelog-modal-' + packageId).classList.add('hidden');
-    }
+    };
     
     // Close modal when clicking outside
     window.addEventListener('click', function(event) {
@@ -518,8 +540,8 @@
         }
     });
     
-    // Auto-fix major upgrade function
-    function autoFixMajorUpgrade(packageName) {
+    // Auto-fix major upgrade function - make global for onclick access
+    window.autoFixMajorUpgrade = function(packageName) {
         if (!confirm(`Are you sure you want to auto-fix breaking changes for ${packageName}? This will attempt to automatically update your code to be compatible with the new major version.`)) {
             return;
         }
@@ -556,27 +578,11 @@
             button.disabled = false;
             button.innerHTML = originalContent;
         });
-    }
+    };
 
-    // Show backups modal
-    function showBackups() {
-        fetch('{{ route("upgrader.backups") }}', {
-            headers: {
-                'Accept': 'application/json',
-                'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
-            }
-        })
-        .then(response => response.json())
-        .then(data => {
-            showBackupsModal(data.backups);
-        })
-        .catch(error => {
-            console.error('Error fetching backups:', error);
-            alert('Failed to load backups');
-        });
-    }
-
-    function showBackupsModal(backups) {
+    // Show backups modal - already defined as window.showBackups above
+    
+    window.showBackupsModal = function(backups) {
         const modalHtml = `
             <div id="backups-modal" class="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center">
                 <div class="bg-white rounded-lg shadow-xl max-w-4xl w-full mx-4 max-h-[90vh] overflow-y-auto">
@@ -620,16 +626,16 @@
             </div>
         `;
         document.body.insertAdjacentHTML('beforeend', modalHtml);
-    }
+    };
 
-    function closeBackupsModal() {
+    window.closeBackupsModal = function() {
         const modal = document.getElementById('backups-modal');
         if (modal) {
             modal.remove();
         }
-    }
+    };
 
-    function restoreBackup(backupId) {
+    window.restoreBackup = function(backupId) {
         if (!confirm(`Are you sure you want to restore from backup ${backupId}? This will revert your packages to their previous versions.`)) {
             return;
         }
@@ -650,8 +656,6 @@
         .then(data => {
             if (data.status === 'started') {
                 closeBackupsModal();
-                showOverlay();
-                pollUpgradeLog(); // Reuse existing log polling
                 alert('Restore started. Monitor progress in the overlay.');
             } else {
                 alert('Restore failed: ' + data.message);
@@ -661,9 +665,9 @@
             console.error('Error:', error);
             alert('Restore failed: Network error');
         });
-    }
+    };
 
-    function deleteBackup(backupId) {
+    window.deleteBackup = function(backupId) {
         if (!confirm(`Are you sure you want to delete backup ${backupId}? This action cannot be undone.`)) {
             return;
         }
@@ -693,7 +697,7 @@
             console.error('Error:', error);
             alert('Delete failed: Network error');
         });
-    }
+    };
 </script>
 
 </body>
