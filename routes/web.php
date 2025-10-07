@@ -10,9 +10,16 @@ Route::group(['prefix' => config('upgrader.route.prefix', 'upgrade')], function 
     Route::get('/', [UpgradeController::class, 'index'])->name('upgrader.index');
     Route::post('/run', [UpgradeController::class, 'upgrade'])->name('upgrader.run');
     Route::post('/clear-cache', [UpgradeController::class, 'clearCache'])->name('upgrader.clear-cache');
-    Route::post('/auto-fix', [UpgradeController::class, 'autoFix'])->name('upgrader.auto-fix');
+    // Compatibility & package management
+    Route::post('/analyze', [UpgradeController::class, 'analyzeCompatibility'])->name('upgrader.analyze');
+    Route::post('/analyze/init', [UpgradeController::class, 'analyzeInit'])->name('upgrader.analyze.init');
+    Route::post('/analyze/chunk', [UpgradeController::class, 'analyzeChunk'])->name('upgrader.analyze.chunk');
+    Route::post('/packages/add', [UpgradeController::class, 'addPackage'])->name('upgrader.packages.add');
+    Route::post('/packages/remove', [UpgradeController::class, 'removePackage'])->name('upgrader.packages.remove');
     Route::get('/log', [UpgradeLogController::class, 'show'])->name('upgrader.log');
     Route::get('/backups', [UpgradeController::class, 'backups'])->name('upgrader.backups');
     Route::post('/restore', [UpgradeController::class, 'restore'])->name('upgrader.restore');
     Route::delete('/backup', [UpgradeController::class, 'deleteBackup'])->name('upgrader.delete-backup');
+
+    
 });

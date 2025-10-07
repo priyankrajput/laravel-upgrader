@@ -43,6 +43,23 @@
                     </span>
                 </div>
                 <div class="flex items-center gap-3">
+                    <form id="analyzeForm" class="flex items-center gap-2" onsubmit="return analyzeCompatibility(event)">
+                        <select id="targetLaravel" class="px-2 py-1.5 text-sm border border-white/30 rounded-lg bg-white/10 text-white">
+                            <option value="">Current Laravel</option>
+                            <option value="9.0" class="text-gray-500">Laravel 9</option>
+                            <option value="10.0" class="text-gray-500">Laravel 10</option>
+                            <option value="11.0" class="text-gray-500">Laravel 11</option>
+                            <option value="12.0" class="text-gray-500">Laravel 12</option>
+                        </select>
+                        <button type="submit" class="inline-flex items-center px-3 py-1.5 border border-white/30 text-sm font-medium rounded-lg text-white bg-white/10 hover:bg-white/20 focus:outline-none focus:ring-2 focus:ring-white/50">
+                            <i class="fas fa-magnifying-glass mr-1"></i>
+                            Analyze
+                        </button>
+                        <button type="button" onclick="startChunkedAnalyze()" class="inline-flex items-center px-3 py-1.5 border border-white/30 text-sm font-medium rounded-lg text-white bg-white/10 hover:bg-white/20 focus:outline-none focus:ring-2 focus:ring-white/50">
+                            <i class="fas fa-list-check mr-1"></i>
+                            Analyze (Chunked)
+                        </button>
+                    </form>
                     <input type="search" id="packageFilter" class="px-3 py-1.5 text-sm border border-white/30 rounded-lg bg-white/10 text-white placeholder-white/70 focus:outline-none focus:ring-2 focus:ring-white/50" placeholder="🔍 Search packages..." />
                     <form action="{{ route('upgrader.clear-cache') }}" method="POST">
                         @csrf
@@ -163,12 +180,10 @@
                                     @endif
                                 </td>
                                 <td class="px-6 py-4 whitespace-nowrap text-sm font-medium space-x-2">
-                                    @if($data['is_major_update'])
-                                        <button type="button" class="inline-flex items-center px-2.5 py-1.5 border border-transparent text-xs font-medium rounded text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500" onclick="autoFixMajorUpgrade('{{ $package }}')" title="Auto-fix breaking changes">
-                                            <i class="fas fa-magic mr-1"></i>
-                                            Auto-Fix
-                                        </button>
-                                    @endif
+                                    
+                                    <button type="button" class="inline-flex items-center px-2.5 py-1.5 border border-gray-300 shadow-sm text-xs font-medium rounded text-gray-700 bg-white hover:bg-gray-50" onclick="removePackageConfirm('{{ $package }}')" title="Remove package">
+                                        <i class="fas fa-trash"></i>
+                                    </button>
                                     @if(isset($changelogs[$package]))
                                         <button type="button" class="inline-flex items-center px-2.5 py-1.5 border border-gray-300 shadow-sm text-xs font-medium rounded text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500" onclick="openChangelogModal('{{ md5($package) }}')">
                                             <i class="fa-solid fa-clock-rotate-left"></i>
@@ -540,45 +555,140 @@
         }
     });
     
-    // Auto-fix major upgrade function - make global for onclick access
-    window.autoFixMajorUpgrade = function(packageName) {
-        if (!confirm(`Are you sure you want to auto-fix breaking changes for ${packageName}? This will attempt to automatically update your code to be compatible with the new major version.`)) {
-            return;
-        }
-        
-        const button = event.target.closest('button');
-        const originalContent = button.innerHTML;
-        button.disabled = true;
-        button.innerHTML = '<svg class="animate-spin -ml-1 mr-3 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>Fixing...';
-        
-        fetch('{{ route("upgrader.auto-fix") }}', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
-            },
-            body: JSON.stringify({
-                package: packageName
-            })
-        })
-        .then(response => response.json())
-        .then(data => {
-            if (data.success) {
-                alert(`Auto-fix completed for ${packageName}!\n\nChanges made:\n${data.changes.join('\n')}`);
-                location.reload(); // Refresh to show updated status
-            } else {
-                alert(`Auto-fix failed for ${packageName}: ${data.message}`);
-            }
-        })
-        .catch(error => {
-            console.error('Error:', error);
-            alert(`Auto-fix failed for ${packageName}: Network error`);
-        })
-        .finally(() => {
-            button.disabled = false;
-            button.innerHTML = originalContent;
-        });
+    // Analyze compatibility for target Laravel
+    window.analyzeCompatibility = function(e){
+        e.preventDefault();
+        const target = document.getElementById('targetLaravel').value;
+        fetch('{{ route("upgrader.analyze") }}',{
+            method:'POST',
+            headers:{'Content-Type':'application/json','Accept':'application/json','X-CSRF-TOKEN':document.querySelector('meta[name="csrf-token"]').getAttribute('content')},
+            body: JSON.stringify({ target_laravel: target || null })
+        }).then(r=>r.json()).then(data=>{
+            showAnalysisModal(data);
+        }).catch(()=>alert('Failed to analyze compatibility'));
+        return false;
     };
+
+    function showAnalysisModal(data){
+        const incompatible = Object.values(data.packages||{}).filter(p=>p && p.compatibility && !p.compatibility.compatible);
+        const html = `
+        <div id="analysis-modal" class="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center">
+            <div class="bg-white rounded-lg shadow-xl max-w-5xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+                <div class="p-6 border-b border-gray-200 flex items-center justify-between">
+                    <h3 class="text-lg font-semibold text-gray-900">Compatibility Analysis ${data.target_laravel?`for Laravel ${data.target_laravel}`:''}</h3>
+                    <button onclick="closeAnalysisModal()" class="text-gray-400 hover:text-gray-600">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+                <div class="p-6">
+                    <div class="mb-4 text-sm text-gray-700">Incompatible packages: <strong>${incompatible.length}</strong> of ${Object.keys(data.packages||{}).length}</div>
+                    ${Array.isArray(data.skipped) && data.skipped.length ? `
+                    <div class="mb-4 p-3 bg-yellow-50 border border-yellow-200 rounded">
+                        <div class="text-sm text-yellow-800 font-medium mb-1">Skipped / Manual review (${data.skipped.length}):</div>
+                        <div class="text-xs text-yellow-800">${data.skipped.map(s=>`${s.name} ${s.reason?`- ${s.reason}`:''}`).join('<br>')}</div>
+                    </div>` : ''}
+                    <div class="divide-y">
+                        ${Object.values(data.packages||{}).map(p=> p ? `
+                            <div class="py-3 flex items-start justify-between">
+                                <div>
+                                    <div class="font-medium ${p.compatibility.compatible?'text-green-700':'text-red-700'}">${p.package}</div>
+                                    <div class="text-xs text-gray-600">${p.recommended_action}</div>
+                                    ${(p.compatibility.alternatives||[]).length?`<div class="text-xs text-gray-600 mt-1">Alternatives: ${p.compatibility.alternatives.join(', ')}</div>`:''}
+                                </div>
+                                ${!p.compatibility.compatible?`
+                                <div class="flex gap-2">
+                                    ${(p.compatibility.alternatives||[]).map(a=>`<button class=\"px-2 py-1 text-xs bg-blue-600 text-white rounded\" onclick=\"quickAddPackage('${a}')\">Add ${a}</button>`).join('')}
+                                    <button class="px-2 py-1 text-xs bg-red-600 text-white rounded" onclick="removePackageConfirm('${p.package}')">Remove</button>
+                                </div>`:''}
+                            </div>` : '').join('')}
+                    </div>
+                </div>
+            </div>
+        </div>`;
+        document.body.insertAdjacentHTML('beforeend', html);
+    }
+    window.closeAnalysisModal = function(){ const m=document.getElementById('analysis-modal'); if(m) m.remove(); };
+
+    // Add/remove package helpers
+    window.addPackagePrompt = function(pkg){
+        const version = prompt(`Enter version/constraint for ${pkg} (e.g. ^1.2 or leave blank):`,'');
+        fetch('{{ route("upgrader.packages.add") }}',{
+            method:'POST', headers:{'Content-Type':'application/json','Accept':'application/json','X-CSRF-TOKEN':document.querySelector('meta[name="csrf-token"]').getAttribute('content')},
+            body: JSON.stringify({ package: pkg, version: version || null })
+        }).then(r=>r.json()).then(()=>{ alert('Package updated in composer.json'); }).catch(()=>alert('Failed to update composer.json'));
+    };
+    window.quickAddPackage = function(pkg){ fetch('{{ route("upgrader.packages.add") }}',{ method:'POST', headers:{'Content-Type':'application/json','Accept':'application/json','X-CSRF-TOKEN':document.querySelector('meta[name="csrf-token"]').getAttribute('content')}, body: JSON.stringify({ package: pkg })}).then(()=>alert(`Added ${pkg} to composer.json`)).catch(()=>alert('Failed to add package')); };
+    window.removePackageConfirm = function(pkg){ if(!confirm(`Remove ${pkg} from composer.json?`)) return; fetch('{{ route("upgrader.packages.remove") }}',{ method:'POST', headers:{'Content-Type':'application/json','Accept':'application/json','X-CSRF-TOKEN':document.querySelector('meta[name="csrf-token"]').getAttribute('content')}, body: JSON.stringify({ package: pkg })}).then(()=>alert('Package removed (if existed)')).catch(()=>alert('Failed to remove package')); };
+
+    // Chunked analysis with progress
+    window.startChunkedAnalyze = async function(){
+        const target = document.getElementById('targetLaravel').value || null;
+        // init
+        const initRes = await fetch('{{ route("upgrader.analyze.init") }}',{ method:'POST', headers:{'Content-Type':'application/json','Accept':'application/json','X-CSRF-TOKEN':document.querySelector('meta[name="csrf-token"]').getAttribute('content')}, body: JSON.stringify({ target_laravel: target })});
+        if(!initRes.ok){ alert('Failed to init analysis'); return; }
+        const init = await initRes.json();
+        const pkgs = init.packages || [];
+        if(pkgs.length===0){ alert('No packages to analyze'); return; }
+        showAnalyzeProgress(pkgs.length);
+        const results = [];
+        const skipped = [];
+        const withTimeout = (promise, ms) => new Promise((resolve, reject) => {
+            const t = setTimeout(() => reject(new Error('timeout')), ms);
+            promise.then(v => { clearTimeout(t); resolve(v); }).catch(e => { clearTimeout(t); reject(e); });
+        });
+        async function analyzeOne(p){
+            const payload = { package: p.name, constraint: p.constraint, target_laravel: target };
+            const doFetch = () => fetch('{{ route("upgrader.analyze.chunk") }}',{ method:'POST', headers:{'Content-Type':'application/json','Accept':'application/json','X-CSRF-TOKEN':document.querySelector('meta[name="csrf-token"]').getAttribute('content')}, body: JSON.stringify(payload)});
+            try{
+                let res = await withTimeout(doFetch(), 12000);
+                if(!res.ok) throw new Error('bad status');
+                return await res.json();
+            }catch(err){
+                // one retry
+                try{
+                    let res = await withTimeout(doFetch(), 12000);
+                    if(!res.ok) throw new Error('bad status');
+                    return await res.json();
+                }catch(e2){
+                    skipped.push({ name: p.name, reason: e2 && e2.message ? e2.message : 'timeout/error' });
+                    return { package: p.name, name: p.name, error: true };
+                }
+            }
+        }
+        for(let i=0;i<pkgs.length;i++){
+            const p = pkgs[i];
+            updateAnalyzeProgress(i+1, pkgs.length, p.name);
+            const data = await analyzeOne(p);
+            results.push(data);
+            await new Promise(r=>setTimeout(r, 100)); // small delay to avoid 504
+        }
+        showAnalysisModal({ packages: Object.fromEntries(results.map(r=>[r.package||r.name||'unknown', r])) , target_laravel: target, skipped });
+        closeAnalyzeProgress();
+    };
+
+    function showAnalyzeProgress(total){
+        const html = `
+        <div id="analyze-progress" class="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center">
+            <div class="bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
+                <div class="p-4 border-b text-sm font-medium">Analyzing packages...</div>
+                <div class="p-4">
+                    <div id="analyze-current" class="text-sm text-gray-700 mb-2">Starting...</div>
+                    <div class="w-full bg-gray-200 rounded h-3 overflow-hidden"><div id="analyze-bar" class="h-3 bg-blue-600" style="width:0%"></div></div>
+                    <div id="analyze-count" class="text-xs text-gray-500 mt-1">0 / ${total}</div>
+                </div>
+            </div>
+        </div>`;
+        document.body.insertAdjacentHTML('beforeend', html);
+    }
+    function updateAnalyzeProgress(done,total,name){
+        const bar = document.getElementById('analyze-bar');
+        const cnt = document.getElementById('analyze-count');
+        const cur = document.getElementById('analyze-current');
+        if(bar){ bar.style.width = Math.round(done*100/total)+"%"; }
+        if(cnt){ cnt.textContent = `${done} / ${total}`; }
+        if(cur){ cur.textContent = `Analyzing: ${name}`; }
+    }
+    function closeAnalyzeProgress(){ const m = document.getElementById('analyze-progress'); if(m) m.remove(); }
 
     // Show backups modal - already defined as window.showBackups above
     

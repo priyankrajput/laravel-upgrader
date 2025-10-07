@@ -7,6 +7,7 @@ use Illuminate\Support\Facades\Cache;
 use Illuminate\Routing\Controller;
 use priyankrajput\LaravelUpgrader\Services\PackageVersionService;
 use priyankrajput\LaravelUpgrader\Services\BackupService;
+use priyankrajput\LaravelUpgrader\Services\PackageCompatibilityAnalyzer;
 
 ini_set('max_execution_time', 300); // 5 minutes
 class UpgradeController extends Controller
@@ -14,12 +15,14 @@ class UpgradeController extends Controller
     protected $config;
     protected $packageService;
     protected $backupService;
+    protected $compatAnalyzer;
 
-    public function __construct(PackageVersionService $packageService, BackupService $backupService)
+    public function __construct(PackageVersionService $packageService, BackupService $backupService, PackageCompatibilityAnalyzer $compatAnalyzer)
     {
         $this->config = config('upgrader');
         $this->packageService = $packageService;
         $this->backupService = $backupService;
+        $this->compatAnalyzer = $compatAnalyzer;
     }
 
     public function index()
@@ -72,7 +75,26 @@ class UpgradeController extends Controller
     public function clearCache()
     {
         Cache::forget($this->config['cache']['key'] ?? 'package_updates');
-        return back()->with('success', 'Update cache cleared. Checking for updates...');
+        // Clear compatibility caches for installed packages and common targets
+        try {
+            $composer = json_decode(file_get_contents(base_path('composer.json')), true);
+            $all = array_merge($composer['require'] ?? [], $composer['require-dev'] ?? []);
+            unset($all['php']);
+            $targets = ['current', '9.0', '10.0', '11.0', '12.0'];
+            foreach ($all as $pkg => $constraint) {
+                foreach ($targets as $suffix) {
+                    $key = "laravel_compatibility_{$pkg}_latest_{$suffix}";
+                    Cache::forget($key);
+                    // analyzer cache too
+                    $akey = "package_analysised_{$pkg}_{$constraint}_{$suffix}";
+                    Cache::forget($akey);
+                }
+            }
+            
+        } catch (\Throwable $e) {
+            // ignore cache clear errors
+        }
+        return back()->with('success', 'Cache cleared. Checking for updates...');
     }
     
 
@@ -164,51 +186,132 @@ class UpgradeController extends Controller
             : redirect()->route('upgrader.index')->with('error', 'Update failed: ' . implode("\n", $output));
     }
 
-    public function autoFix(Request $request)
+    /**
+     * Analyze package compatibility for a target Laravel version.
+     */
+    public function analyzeCompatibility(Request $request)
+    {
+        $request->validate([
+            'target_laravel' => 'nullable|string'
+        ]);
+
+        $target = $request->input('target_laravel');
+        $result = $this->compatAnalyzer->analyzeProjectCompatibility($target);
+
+        return response()->json($result);
+    }
+
+    /**
+     * Initialize chunked analysis: returns list of packages to analyze.
+     */
+    public function analyzeInit(Request $request)
+    {
+        $request->validate([
+            'target_laravel' => 'nullable|string'
+        ]);
+
+        $composer = json_decode(file_get_contents(base_path('composer.json')), true);
+        $require = $composer['require'] ?? [];
+        $requireDev = $composer['require-dev'] ?? [];
+        $all = array_merge($require, $requireDev);
+        unset($all['php'], $all['laravel/framework']);
+
+        $packages = [];
+        foreach ($all as $name => $constraint) {
+            $packages[] = [
+                'name' => $name,
+                'constraint' => $constraint
+            ];
+        }
+
+        return response()->json([
+            'packages' => $packages,
+            'count' => count($packages),
+        ]);
+    }
+
+    /**
+     * Analyze a single package and return compatibility.
+     */
+    public function analyzeChunk(Request $request)
+    {
+        $request->validate([
+            'package' => 'required|string',
+            'constraint' => 'nullable|string',
+            'target_laravel' => 'nullable|string'
+        ]);
+
+        $package = $request->input('package');
+        $constraint = $request->input('constraint', '*');
+        $target = $request->input('target_laravel');
+
+        $compat = $this->compatAnalyzer->analyzePackageCompatibility($package, $constraint, $target ?: app()->version());
+
+        return response()->json($compat);
+    }
+
+    /**
+     * Add or update a package constraint in composer.json
+     */
+    public function addPackage(Request $request)
+    {
+        $request->validate([
+            'package' => 'required|string',
+            'version' => 'nullable|string'
+        ]);
+
+        $package = $request->input('package');
+        $version = $request->input('version');
+
+        $composerPath = base_path('composer.json');
+        $composer = json_decode(file_get_contents($composerPath), true);
+
+        if (!isset($composer['require'])) {
+            $composer['require'] = [];
+        }
+
+        $composer['require'][$package] = $version ? $version : '*';
+
+        file_put_contents(
+            $composerPath,
+            json_encode($composer, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)
+        );
+
+        return response()->json(['success' => true]);
+    }
+
+    /**
+     * Remove a package from composer.json
+     */
+    public function removePackage(Request $request)
     {
         $request->validate([
             'package' => 'required|string'
         ]);
 
         $package = $request->input('package');
-        $changes = [];
 
-        try {
-            // Get current and target versions for the package
-            $cacheKey = $this->config['cache']['key'] ?? 'package_updates';
-            $cached = Cache::get($cacheKey, []);
-            
-            if (!isset($cached['updates'][$package])) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Package not found in update list'
-                ], 404);
-            }
+        $composerPath = base_path('composer.json');
+        $composer = json_decode(file_get_contents($composerPath), true);
 
-            $packageData = $cached['updates'][$package];
-            
-            if (!$packageData['is_major_update']) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Package does not have a major update'
-                ], 400);
-            }
-
-            // Apply auto-fixes based on the package
-            $changes = $this->applyAutoFixes($package, $packageData);
-
-            return response()->json([
-                'success' => true,
-                'message' => 'Auto-fix completed successfully',
-                'changes' => $changes
-            ]);
-
-        } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Auto-fix failed: ' . $e->getMessage()
-            ], 500);
+        $changed = false;
+        if (isset($composer['require'][$package])) {
+            unset($composer['require'][$package]);
+            $changed = true;
         }
+        if (isset($composer['require-dev'][$package])) {
+            unset($composer['require-dev'][$package]);
+            $changed = true;
+        }
+
+        if ($changed) {
+            file_put_contents(
+                $composerPath,
+                json_encode($composer, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)
+            );
+        }
+
+        return response()->json(['success' => true, 'changed' => $changed]);
     }
 
     private function applyAutoFixes($package, $packageData)
