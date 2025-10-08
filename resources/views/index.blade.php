@@ -88,6 +88,20 @@
                 </div>
             </div>
 
+            @if(!empty($hasMajorUpdates))
+            <div class="mb-6 p-4 bg-red-50 border-l-4 border-red-500 rounded-lg">
+                <div class="flex">
+                    <i class="fas fa-exclamation-circle text-red-500 mr-3 mt-0.5"></i>
+                    <div>
+                        <h3 class="text-sm font-semibold text-red-800">Major version upgrade detected</h3>
+                        <p class="mt-1 text-sm text-red-700">
+                            One or more selected packages have a major version update which may include breaking changes. Please contact your developer before proceeding.
+                        </p>
+                    </div>
+                </div>
+            </div>
+            @endif
+
             <!-- Upgrade Form -->
             <form method="POST" action="{{ route('upgrader.run') }}" id="upgradeForm">
                 @csrf
@@ -163,12 +177,12 @@
                                     @endif
                                 </td>
                                 <td class="px-6 py-4 whitespace-nowrap text-sm font-medium space-x-2">
-                                    @if($data['is_major_update'])
+                                    <!-- @if($data['is_major_update'])
                                         <button type="button" class="inline-flex items-center px-2.5 py-1.5 border border-transparent text-xs font-medium rounded text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500" onclick="autoFixMajorUpgrade('{{ $package }}')" title="Auto-fix breaking changes">
                                             <i class="fas fa-magic mr-1"></i>
                                             Auto-Fix
                                         </button>
-                                    @endif
+                                    @endif -->
                                     @if(isset($changelogs[$package]))
                                         <button type="button" class="inline-flex items-center px-2.5 py-1.5 border border-gray-300 shadow-sm text-xs font-medium rounded text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500" onclick="openChangelogModal('{{ md5($package) }}')">
                                             <i class="fa-solid fa-clock-rotate-left"></i>
@@ -265,6 +279,7 @@
 
 <script>
     document.addEventListener('DOMContentLoaded', function() {
+        const hasMajorUpdates = Boolean({{ !empty($hasMajorUpdates) ? 'true' : 'false' }});
         // Select all checkboxes
         const selectAll = document.getElementById('selectAll');
         const checkboxes = document.querySelectorAll('.package-checkbox');
@@ -472,7 +487,10 @@
         // Enhanced submit: async start + overlay + log polling
         form.addEventListener('submit', async function(e) {
             e.preventDefault();
-            if (!confirm('Are you sure you want to update the selected packages? This action cannot be undone.')) {
+            const baseMsg = 'Are you sure you want to update the selected packages? This action cannot be undone.';
+            const majorMsg = 'Major version upgrades detected. Breaking changes may occur. Please contact your developer before proceeding.\n\nProceed anyway?';
+            const finalMsg = hasMajorUpdates ? (majorMsg + '\n\n' + baseMsg) : baseMsg;
+            if (!confirm(finalMsg)) {
                 return false;
             }
             // Show overlay

@@ -65,7 +65,8 @@ class UpgradeController extends Controller
             'currentVersions' => $currentVersions,
             'availableUpdates' => $availableUpdates,
             'changelogs' => $changelogs,
-            'hasUpdates' => collect($availableUpdates)->contains('has_update', true)
+            'hasUpdates' => collect($availableUpdates)->contains('has_update', true),
+            'hasMajorUpdates' => collect($availableUpdates)->contains(function($d){ return !empty($d['is_major_update']); })
         ]);
     }
 
